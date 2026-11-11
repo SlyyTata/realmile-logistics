@@ -1,10 +1,41 @@
 services:
+  # One-off job: applies alembic migrations to the database, then exits.
+  # There is no alembic.ini in the repo, so alembic is configured in code.
+  migrate:
+    build: .
+    env_file: .env
+    command:
+      - python
+      - -c
+      - |
+        from alembic.config import Config
+        from alembic import command
+        cfg = Config()
+        cfg.set_main_option("script_location", "alembic")
+        command.upgrade(cfg, "head")
+        print("Migrations applied. Database is at:")
+        command.current(cfg)
+    restart: "no"
+
   api:
     build: .
     env_file: .env
     ports: ["8000:8000"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # The slim Python image has no curl, so the check uses Python itself.
+    # urlopen raises on non-2xx (e.g. 503 when the DB is unreachable) -> unhealthy.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
   web:
     build: ./frontend
     ports: ["3000:3000"]
-    depends_on: [api]
-
+    depends_on:
+      api:
+        condition: service_healthy
