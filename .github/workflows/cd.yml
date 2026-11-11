@@ -16,6 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
   AWS_REGION: ${{ vars.AWS_REGION }}
   ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
   API_SERVICE: ${{ vars.API_SERVICE }}
@@ -37,8 +38,6 @@ jobs:
     permissions: {}
     steps:
       - name: Verify required secrets and variables are set
-        env:
-          AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
         run: |
           missing=""
           for name in AWS_DEPLOY_ROLE_ARN AWS_REGION ECS_CLUSTER \
@@ -47,7 +46,7 @@ jobs:
             if [ -z "${!name}" ]; then missing="$missing $name"; fi
           done
           if [ -n "$missing" ]; then
-            echo "::error::Missing GitHub secrets/variables:$missing"
+            echo "::error::Missing GitHub variables:$missing"
             exit 1
           fi
           echo "All required configuration is set."
@@ -85,7 +84,7 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Log in to Amazon ECR
@@ -119,7 +118,7 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       # ECR image URIs look like <account>.dkr.ecr.<region>.amazonaws.com/<repo>:<tag>
