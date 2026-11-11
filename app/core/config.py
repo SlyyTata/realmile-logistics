@@ -13,6 +13,16 @@ class Settings(BaseSettings):
     ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
 
+    # Deployment config
+    # Comma-separated list of frontend origins allowed to call the API (CORS)
+    CORS_ORIGINS: str = "http://localhost:3000"
+    # Log every SQL statement (development only)
+    DEBUG: bool = False
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
     # Tells Pydantic to read from the .env file
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

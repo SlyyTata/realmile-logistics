@@ -14,7 +14,7 @@ import {
     Globe,
     Loader2
 } from 'lucide-react';
-import axios from 'axios';
+import api from '@/lib/api';
 
 export default function LoginPage() {
     const router = useRouter();
@@ -36,8 +36,8 @@ export default function LoginPage() {
             params.append('username', formData.username);
             params.append('password', formData.password);
 
-            const response = await axios.post(
-                'http://localhost:8000/api/v1/auth/login',
+            const response = await api.post(
+                '/auth/login',
                 params,
                 { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
             );
