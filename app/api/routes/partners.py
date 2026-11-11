@@ -28,7 +28,10 @@ async def create_partner(
     return new_partner
 
 @router.get("/", response_model=List[PartnerOut])
-async def list_partners(db: AsyncSession = Depends(get_db)):
+async def list_partners(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
     """Returns all logistics partners."""
     result = await db.execute(select(Partner))
     return result.scalars().all()

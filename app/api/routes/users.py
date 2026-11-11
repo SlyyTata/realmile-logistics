@@ -32,7 +32,10 @@ async def get_users_by_role(
     return result.scalars().all()
 
 @router.get("/operations/riders", response_model=List[UserOut])
-async def get_delivery_personnel(db: AsyncSession = Depends(get_db)):
+async def get_delivery_personnel(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     """Returns everyone who delivers (Riders + Foot Couriers)."""
     result = await db.execute(
         select(User).where(User.role.in_([UserRole.RIDER, UserRole.FOOT_COURIER]))
@@ -82,13 +85,3 @@ async def delete_user(
     await db.delete(user)
     await db.commit()
     return {"message": "User deleted successfully"}
-
-
-@router.get("/", response_model=List[UserOut])
-async def list_all_users(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(check_admin) # Only Uncle can see the whole list
-):
-    """Returns a list of all staff and riders."""
-    result = await db.execute(select(User))
-    return result.scalars().all()
