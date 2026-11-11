@@ -1,11 +1,10 @@
 name: CD
 
-# Every merge to main: build both images, push them to Docker Hub tagged with
-# the commit SHA, then roll them out to ECS. AWS access uses OIDC (no stored keys).
+# Every merge to main: build both images, push them to Amazon ECR tagged with
+# the commit SHA, then roll them out to ECS. AWS access uses OIDC (no stored keys),
+# for both the ECR push and the ECS deploy.
 #
 # Required GitHub settings (Settings -> Secrets and variables -> Actions):
-#   Secret   DOCKERHUB_TOKEN       Docker Hub access token (Read & Write)
-#   Variable DOCKERHUB_USERNAME    slyytata
 #   Variable AWS_DEPLOY_ROLE_ARN   Terraform output app_deploy_role_arn
 #   Variable AWS_REGION            eu-west-2
 
@@ -27,23 +26,29 @@ env:
   WEB_SERVICE: three-tier-frontend-svc
   WEB_TASK_FAMILY: three-tier-frontend
   WEB_CONTAINER: frontend
+  # ECR repositories (Terraform ecr.tf)
+  API_REPOSITORY: three-tier-api
+  WEB_REPOSITORY: three-tier-frontend
 
 jobs:
   publish:
     name: Publish ${{ matrix.name }} image
     runs-on: ubuntu-latest
     permissions:
+      id-token: write   # OIDC login to AWS, needed to push to ECR
       contents: read
     strategy:
       # I used a matrix because the API and web images go through exactly the same steps: 
-      # check out the code, set up Buildx, log in to Docker Hub, then build and push. 
+      # check out the code, set up Buildx, log in to ECR, then build and push. 
       #Only four values differ: the name, the folder, the build argument and the cache scope. The matrix lets me write the steps once and run them for each image.
       matrix:
         include:
           - name: api
+            repository: three-tier-api
             context: .
             build-args: ""
           - name: web
+            repository: three-tier-frontend
             context: ./frontend
             # Browser calls the API on the same address; the ALB routes /api/* to it
             build-args: NEXT_PUBLIC_API_URL=/api/v1
@@ -54,11 +59,15 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -68,8 +77,8 @@ jobs:
           push: true
           build-args: ${{ matrix.build-args }}
           tags: |
-            ${{ vars.DOCKERHUB_USERNAME }}/realmile-${{ matrix.name }}:${{ github.sha }}
-            ${{ vars.DOCKERHUB_USERNAME }}/realmile-${{ matrix.name }}:latest
+            ${{ steps.ecr.outputs.registry }}/${{ matrix.repository }}:${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/${{ matrix.repository }}:latest
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 
@@ -82,15 +91,19 @@ jobs:
     permissions:
       id-token: write   # lets the job request a GitHub OIDC token for AWS
       contents: read
-    env:
-      API_IMAGE: docker.io/${{ vars.DOCKERHUB_USERNAME }}/realmile-api:${{ github.sha }}
-      WEB_IMAGE: docker.io/${{ vars.DOCKERHUB_USERNAME }}/realmile-web:${{ github.sha }}
     steps:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+
+      # ECR image URIs look like <account>.dkr.ecr.<region>.amazonaws.com/<repo>:<tag>
+      - name: Work out image URIs
+        run: |
+          REGISTRY="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${AWS_REGION}.amazonaws.com"
+          echo "API_IMAGE=${REGISTRY}/${API_REPOSITORY}:${GITHUB_SHA}" >> "$GITHUB_ENV"
+          echo "WEB_IMAGE=${REGISTRY}/${WEB_REPOSITORY}:${GITHUB_SHA}" >> "$GITHUB_ENV"
 
       # Start from the live task definitions (managed by Terraform) and only swap the image
       - name: Download current task definitions
