@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+# Cancel an in-progress run when a newer commit is pushed to the same branch
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  api:
+    name: Build API image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true            # keep the image locally so the smoke test can run it
+          push: false
+          tags: realmile-api:ci
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      # Imports the whole app inside the image. Catches missing dependencies,
+      # syntax errors and broken imports without needing a real database.
+      # These are throwaway dummy values, not secrets.
+      - name: Smoke test (app imports)
+        run: |
+          docker run --rm \
+            -e DATABASE_URL=postgresql+asyncpg://ci:ci@localhost/ci \
+            -e SECRET_KEY=ci-dummy-key \
+            -e ALGORITHM=HS256 \
+            -e ACCESS_TOKEN_EXPIRE_MINUTES=60 \
+            realmile-api:ci \
+            python -c "import app.main; print('API imports OK')"
+
+  web:
+    name: Build web image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # The Dockerfile runs `npm ci` and `next build`, so this also
+      # type-checks and compiles the frontend.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: false
+          tags: realmile-web:ci
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
