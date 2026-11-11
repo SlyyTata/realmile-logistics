@@ -4,9 +4,6 @@ name: CD
 # the commit SHA, then roll them out to ECS. AWS access uses OIDC (no stored keys),
 # for both the ECR push and the ECS deploy.
 #
-# Required GitHub settings (Settings -> Secrets and variables -> Actions):
-#   Variable AWS_DEPLOY_ROLE_ARN   Terraform output app_deploy_role_arn
-#   Variable AWS_REGION            eu-west-2
 
 on:
   push:
@@ -18,40 +15,66 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
-# Names come from the Terraform stack in 3rd-tier-custom-infra (project_name = "three-tier")
 env:
-  ECS_CLUSTER: three-tier-cluster
-  API_SERVICE: three-tier-api-svc
-  API_TASK_FAMILY: three-tier-api
-  WEB_SERVICE: three-tier-frontend-svc
-  WEB_TASK_FAMILY: three-tier-frontend
-  WEB_CONTAINER: frontend
-  # ECR repositories (Terraform ecr.tf)
-  API_REPOSITORY: three-tier-api
-  WEB_REPOSITORY: three-tier-frontend
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+  API_SERVICE: ${{ vars.API_SERVICE }}
+  API_TASK_FAMILY: ${{ vars.API_TASK_FAMILY }}
+  API_CONTAINER: ${{ vars.API_CONTAINER }}
+  MIGRATE_CONTAINER: ${{ vars.MIGRATE_CONTAINER }}
+  API_REPOSITORY: ${{ vars.API_REPOSITORY }}
+  WEB_SERVICE: ${{ vars.WEB_SERVICE }}
+  WEB_TASK_FAMILY: ${{ vars.WEB_TASK_FAMILY }}
+  WEB_CONTAINER: ${{ vars.WEB_CONTAINER }}
+  WEB_REPOSITORY: ${{ vars.WEB_REPOSITORY }}
+  NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
 
 jobs:
+  # Fail fast with a clear message instead of a confusing AWS error later
+  check-config:
+    name: Check configuration
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Verify required secrets and variables are set
+        env:
+          AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          missing=""
+          for name in AWS_DEPLOY_ROLE_ARN AWS_REGION ECS_CLUSTER \
+                      API_SERVICE API_TASK_FAMILY API_CONTAINER MIGRATE_CONTAINER API_REPOSITORY \
+                      WEB_SERVICE WEB_TASK_FAMILY WEB_CONTAINER WEB_REPOSITORY NEXT_PUBLIC_API_URL; do
+            if [ -z "${!name}" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing GitHub secrets/variables:$missing"
+            exit 1
+          fi
+          echo "All required configuration is set."
+
   publish:
     name: Publish ${{ matrix.name }} image
+    needs: check-config
     runs-on: ubuntu-latest
     permissions:
       id-token: write   # OIDC login to AWS, needed to push to ECR
       contents: read
     strategy:
-      # I used a matrix because the API and web images go through exactly the same steps: 
-      # check out the code, set up Buildx, log in to ECR, then build and push. 
-      #Only four values differ: the name, the folder, the build argument and the cache scope. The matrix lets me write the steps once and run them for each image.
+      # I used a matrix because the API and web images go through exactly the same steps:
+      # check out the code, set up Buildx, log in to ECR, then build and push.
+      # Only a few values differ: the name, the repository, the folder and the build argument.
+      # The matrix lets me write the steps once and run them for each image.
       matrix:
         include:
           - name: api
-            repository: three-tier-api
+            repository: ${{ vars.API_REPOSITORY }}
             context: .
             build-args: ""
           - name: web
-            repository: three-tier-frontend
+            repository: ${{ vars.WEB_REPOSITORY }}
             context: ./frontend
             # Browser calls the API on the same address; the ALB routes /api/* to it
-            build-args: NEXT_PUBLIC_API_URL=/api/v1
+            build-args: NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL }}
     steps:
       - name: Check out the code
         uses: actions/checkout@v4
@@ -62,8 +85,8 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Log in to Amazon ECR
         id: ecr
@@ -83,6 +106,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 
   deploy:
+    # The deploy job starts here, but it doesn't run until the publish job has finished successfully for both images.
     name: Deploy to ECS
     needs: publish
     runs-on: ubuntu-latest
@@ -95,8 +119,8 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
       # ECR image URIs look like <account>.dkr.ecr.<region>.amazonaws.com/<repo>:<tag>
       - name: Work out image URIs
@@ -117,7 +141,7 @@ jobs:
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: api-td.json
-          container-name: migrate
+          container-name: ${{ env.MIGRATE_CONTAINER }}
           image: ${{ env.API_IMAGE }}
 
       - name: Render API task definition (api)
@@ -125,7 +149,7 @@ jobs:
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: ${{ steps.api-migrate.outputs.task-definition }}
-          container-name: api
+          container-name: ${{ env.API_CONTAINER }}
           image: ${{ env.API_IMAGE }}
 
       - name: Deploy API
