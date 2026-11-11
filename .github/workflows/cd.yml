@@ -1,0 +1,141 @@
+name: CD
+
+# Every merge to main: build both images, push them to Docker Hub tagged with
+# the commit SHA, then roll them out to ECS. AWS access uses OIDC (no stored keys).
+#
+# Required GitHub settings (Settings -> Secrets and variables -> Actions):
+#   Secret   DOCKERHUB_TOKEN       Docker Hub access token (Read & Write)
+#   Variable DOCKERHUB_USERNAME    slyytata
+#   Variable AWS_DEPLOY_ROLE_ARN   Terraform output app_deploy_role_arn
+#   Variable AWS_REGION            eu-west-2
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Never run two deploys at once, and never cancel one halfway through
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+# Names come from the Terraform stack in 3rd-tier-custom-infra (project_name = "three-tier")
+env:
+  ECS_CLUSTER: three-tier-cluster
+  API_SERVICE: three-tier-api-svc
+  API_TASK_FAMILY: three-tier-api
+  WEB_SERVICE: three-tier-frontend-svc
+  WEB_TASK_FAMILY: three-tier-frontend
+  WEB_CONTAINER: frontend
+
+jobs:
+  publish:
+    name: Publish ${{ matrix.name }} image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      # I used a matrix because the API and web images go through exactly the same steps: 
+      # check out the code, set up Buildx, log in to Docker Hub, then build and push. 
+      #Only four values differ: the name, the folder, the build argument and the cache scope. The matrix lets me write the steps once and run them for each image.
+      matrix:
+        include:
+          - name: api
+            context: .
+            build-args: ""
+          - name: web
+            context: ./frontend
+            # Browser calls the API on the same address; the ALB routes /api/* to it
+            build-args: NEXT_PUBLIC_API_URL=/api/v1
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/amd64
+          push: true
+          build-args: ${{ matrix.build-args }}
+          tags: |
+            ${{ vars.DOCKERHUB_USERNAME }}/realmile-${{ matrix.name }}:${{ github.sha }}
+            ${{ vars.DOCKERHUB_USERNAME }}/realmile-${{ matrix.name }}:latest
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  deploy:
+    name: Deploy to ECS
+    needs: publish
+    runs-on: ubuntu-latest
+    # Note: no `environment:` here. Adding one changes the OIDC token subject to
+    # repo:<repo>:environment:<name>, which the IAM role trust policy would reject.
+    permissions:
+      id-token: write   # lets the job request a GitHub OIDC token for AWS
+      contents: read
+    env:
+      API_IMAGE: docker.io/${{ vars.DOCKERHUB_USERNAME }}/realmile-api:${{ github.sha }}
+      WEB_IMAGE: docker.io/${{ vars.DOCKERHUB_USERNAME }}/realmile-web:${{ github.sha }}
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # Start from the live task definitions (managed by Terraform) and only swap the image
+      - name: Download current task definitions
+        run: |
+          aws ecs describe-task-definition --task-definition "$API_TASK_FAMILY" --query taskDefinition > api-td.json
+          aws ecs describe-task-definition --task-definition "$WEB_TASK_FAMILY" --query taskDefinition > web-td.json
+
+      # --- API: the migrate and api containers both run the API image ---
+      - name: Render API task definition (migrate)
+        id: api-migrate
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: api-td.json
+          container-name: migrate
+          image: ${{ env.API_IMAGE }}
+
+      - name: Render API task definition (api)
+        id: api-td
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ steps.api-migrate.outputs.task-definition }}
+          container-name: api
+          image: ${{ env.API_IMAGE }}
+
+      - name: Deploy API
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.api-td.outputs.task-definition }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          service: ${{ env.API_SERVICE }}
+          wait-for-service-stability: true
+
+      # --- Web (after the API, so new frontend code never hits an old API) ---
+      - name: Render web task definition
+        id: web-td
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: web-td.json
+          container-name: ${{ env.WEB_CONTAINER }}
+          image: ${{ env.WEB_IMAGE }}
+
+      - name: Deploy web
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.web-td.outputs.task-definition }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          service: ${{ env.WEB_SERVICE }}
+          wait-for-service-stability: true
