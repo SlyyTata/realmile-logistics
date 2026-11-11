@@ -9,7 +9,11 @@ from app.api.routes import auth, partners, users, parcels, dashboard
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    description="Backend for Realmile Logistics Last-Mile Management System"
+    description="Backend for Realmile Logistics Last-Mile Management System",
+    # Served under /api so the load balancer's /api/* rule sends them to the API
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
 )
 
 # Set up CORS (Cross-Origin Resource Sharing)

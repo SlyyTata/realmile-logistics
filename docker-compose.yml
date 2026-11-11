@@ -1,20 +1,10 @@
 services:
   # One-off job: applies alembic migrations to the database, then exits.
-  # There is no alembic.ini in the repo, so alembic is configured in code.
+  # See app/migrate.py.
   migrate:
     build: .
     env_file: .env
-    command:
-      - python
-      - -c
-      - |
-        from alembic.config import Config
-        from alembic import command
-        cfg = Config()
-        cfg.set_main_option("script_location", "alembic")
-        command.upgrade(cfg, "head")
-        print("Migrations applied. Database is at:")
-        command.current(cfg)
+    command: ["python", "-m", "app.migrate"]
     restart: "no"
 
   api:
