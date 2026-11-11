@@ -49,7 +49,7 @@ export default function LandingPage() {
         </p>
 
         <div className="mt-14 flex flex-col sm:flex-row gap-6">
-          <Link href="/signup">
+          <Link href="/login">
             <button className="bg-brand-black text-white px-12 py-6 rounded-2xl font-black text-lg flex items-center gap-3 hover:bg-black transition-all shadow-[0_20px_50px_rgba(0,0,0,0.2)] hover:scale-105 active:scale-95 group">
               Start Building <ArrowRight size={22} className="text-primary group-hover:translate-x-1 transition-transform" />
             </button>
