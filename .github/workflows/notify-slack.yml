@@ -1,0 +1,90 @@
+name: Notify Slack
+
+# Reusable workflow: CI and CD call this when one of their jobs fails.
+# It posts a message to the team's Slack channel with what failed and a link to the run.
+#
+# Setup (one time): create a Slack "Incoming Webhook" for the channel and save its URL
+# as the repository SECRET  SLACK_WEBHOOK_URL  (it is a secret: anyone with the URL can post).
+# Without the secret, this job only prints a warning and does not fail the pipeline.
+
+on:
+  workflow_call:
+    inputs:
+      results:
+        description: "JSON of the caller's needs context (job id -> result)"
+        required: true
+        type: string
+    secrets:
+      SLACK_WEBHOOK_URL:
+        required: false
+
+permissions: {}   # only talks to Slack, needs no GitHub access
+
+jobs:
+  notify:
+    name: Send Slack alert
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post failure message to Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          RESULTS: ${{ inputs.results }}
+          # The github context here belongs to the CALLER (CI or CD run)
+          WORKFLOW: ${{ github.workflow }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          EVENT: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ github.sha }}
+          # Commit message on push, PR title on pull requests (passed via env, never inlined
+          # into the script, so a malicious title cannot inject shell commands)
+          TITLE: ${{ github.event.head_commit.message || github.event.pull_request.title || '' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "::warning::SLACK_WEBHOOK_URL secret is not set, skipping Slack alert"
+            exit 0
+          fi
+
+          # Which jobs failed, e.g. "integration-tests"
+          failed=$(echo "$RESULTS" | jq -r '[to_entries[] | select(.value.result == "failure") | .key] | join(", ")')
+          [ -z "$failed" ] && failed="(see run)"
+
+          # First line of the commit message, max 100 chars
+          title=$(printf '%s' "$TITLE" | head -n1 | cut -c1-100)
+
+          # jq builds the JSON so quotes or special characters in commit messages can't break it
+          payload=$(jq -n \
+            --arg workflow "$WORKFLOW" --arg repo "$REPO" --arg branch "$BRANCH" \
+            --arg event "$EVENT" --arg actor "$ACTOR" --arg sha "${SHA:0:7}" \
+            --arg title "$title" --arg failed "$failed" \
+            --arg run_url "$RUN_URL" --arg commit_url "$COMMIT_URL" '
+            {
+              text: ":x: \($workflow) failed on \($branch) in \($repo)",
+              blocks: [
+                { type: "header",
+                  text: { type: "plain_text", text: "❌ \($workflow) failed" } },
+                { type: "section",
+                  fields: [
+                    { type: "mrkdwn", text: "*Repository:*\n\($repo)" },
+                    { type: "mrkdwn", text: "*Branch:*\n`\($branch)`" },
+                    { type: "mrkdwn", text: "*Failed job(s):*\n\($failed)" },
+                    { type: "mrkdwn", text: "*Triggered by:*\n\($actor) (\($event))" }
+                  ] },
+                { type: "section",
+                  text: { type: "mrkdwn", text: "*Commit:* <\($commit_url)|\($sha)> \($title)" } },
+                { type: "actions",
+                  elements: [
+                    { type: "button", style: "danger",
+                      text: { type: "plain_text", text: "View failed run" },
+                      url: $run_url }
+                  ] }
+              ]
+            }')
+
+          # --fail makes this step fail if Slack rejects the message (e.g. revoked webhook)
+          curl --silent --show-error --fail -X POST \
+            -H 'Content-Type: application/json' \
+            --data "$payload" "$SLACK_WEBHOOK_URL"
+          echo "Slack alert sent"
