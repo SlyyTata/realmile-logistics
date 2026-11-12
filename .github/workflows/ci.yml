@@ -19,6 +19,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  UV_PYTHON_PREFERENCE: only-system   # use the Python from actions/setup-python
+
 jobs:
   unit-tests:
     name: Unit tests
@@ -27,12 +30,19 @@ jobs:
       - name: Checkout the code
         uses: actions/checkout@v4
 
-      # uv installs Python 3.14 and the exact versions from uv.lock (incl. dev tools)
-      - name: Set up uv and Python
+      # Stable Python 3.14 (same as the python:3.14-slim production image)
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      # uv installs the exact versions from uv.lock (incl. dev tools).
+      # UV_PYTHON_PREFERENCE=only-system (below) stops uv 0.8.0 from downloading
+      # its own Python 3.14, which is an old beta that pydantic crashes on.
+      - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
           version: "0.8.0"
-          python-version: "3.14"
           enable-cache: true
 
       - name: Install dependencies
@@ -73,11 +83,15 @@ jobs:
       - name: Checkout the code
         uses: actions/checkout@v4
 
-      - name: Set up uv and Python
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
           version: "0.8.0"
-          python-version: "3.14"
           enable-cache: true
 
       - name: Install dependencies
