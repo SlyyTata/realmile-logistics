@@ -6,7 +6,7 @@ engine = create_async_engine(
     settings.DATABASE_URL, 
     echo=settings.DEBUG,
     future=True,
-    connect_args={"ssl": True}, 
+    connect_args={"ssl": settings.DATABASE_SSL},
     pool_pre_ping=True,   
     pool_recycle=3600   
 )
