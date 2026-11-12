@@ -7,6 +7,9 @@ class Settings(BaseSettings):
     
     # Database config
     DATABASE_URL: str
+    # Use SSL for the database connection. Neon requires it; set to false only
+    # for a local/CI Postgres that has no SSL (e.g. the test database in CI).
+    DATABASE_SSL: bool = True
     
     # Security config
     SECRET_KEY: str

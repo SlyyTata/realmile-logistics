@@ -105,5 +105,8 @@ async def get_parcel_by_waybill(db: AsyncSession, waybill: str):
         select(Parcel)
         .where(Parcel.waybill_number == waybill)
         .options(selectinload(Parcel.history))
+        # Reload from the database even if this parcel is already in the session,
+        # otherwise a re-fetch after an update returns the old history
+        .execution_options(populate_existing=True)
     )
     return result.scalars().first()

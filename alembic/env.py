@@ -53,7 +53,7 @@ async def run_migrations_online() -> None:
         configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
-        connect_args={"ssl": True},
+        connect_args={"ssl": settings.DATABASE_SSL},
     )
 
     async with connectable.connect() as connection:

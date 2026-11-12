@@ -18,3 +18,20 @@ dependencies = [
     "sqlalchemy>=2.0.49",
     "uvicorn>=0.46.0",
 ]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28",
+    "pytest>=8.4",
+    "pytest-asyncio>=1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+# Strict mode: typos in markers/config, or an "expected failure" that suddenly
+# passes, are errors instead of being silently ignored. -ra lists every
+# skipped/failed test in the summary so nothing is hidden.
+addopts = "--strict-markers --strict-config -ra"
+xfail_strict = true

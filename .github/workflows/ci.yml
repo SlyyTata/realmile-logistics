@@ -1,9 +1,8 @@
 name: CI
 
-# Every push to any branch and PR to main: build both images, push them to Amazon ECR tagged with
-# the commit SHA, then roll them out to ECS. AWS access uses OIDC (no stored keys),
-# for both the ECR push and the ECS deploy.
-#
+# Runs on every push and on PRs to main. Nothing is published or deployed here.
+#   unit-tests         fast tests of app logic, no database
+#   integration-tests  the real API against a throwaway Postgres, after running migrations
 
 
 on:
@@ -20,57 +19,87 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  UV_PYTHON_PREFERENCE: only-system   # use the Python from actions/setup-python
+
 jobs:
-  api:
-    name: Build API image
+  unit-tests:
+    name: Unit tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout the code
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build image
-        uses: docker/build-push-action@v6
+      # Stable Python 3.14 (same as the python:3.14-slim production image)
+      - name: Set up Python
+        uses: actions/setup-python@v6
         with:
-          context: .
-          load: true            # keep the image locally so the smoke test can run it
-          push: false
-          tags: realmile-api:ci
-          cache-from: type=gha,scope=api
-          cache-to: type=gha,mode=max,scope=api
+          python-version: "3.14"
 
-      # Imports the whole app inside the image. Catches missing dependencies,
-      # syntax errors and broken imports without needing a real database.
-      # These are throwaway dummy values, not secrets.
-      - name: Smoke test (app imports)
-        run: |
-          docker run --rm \
-            -e DATABASE_URL=postgresql+asyncpg://ci:ci@localhost/ci \
-            -e SECRET_KEY=ci-dummy-key \
-            -e ALGORITHM=HS256 \
-            -e ACCESS_TOKEN_EXPIRE_MINUTES=60 \
-            realmile-api:ci \
-            python -c "import app.main; print('API imports OK')"
+      # uv installs the exact versions from uv.lock (incl. dev tools).
+      # UV_PYTHON_PREFERENCE=only-system (below) stops uv 0.8.0 from downloading
+      # its own Python 3.14, which is an old beta that pydantic crashes on.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.0"
+          enable-cache: true
 
-  web:
-    name: Build web image
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      # No database is needed: tests/conftest.py supplies dummy settings
+      - name: Run unit tests
+        run: uv run pytest tests/unit -v
+
+  integration-tests:
+    name: Integration tests
     runs-on: ubuntu-latest
+    # A real Postgres for this job only; it is thrown away when the job ends
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: realmile
+          POSTGRES_PASSWORD: realmile
+          POSTGRES_DB: realmile_test
+        ports:
+          - 5432:5432
+        # Don't start the steps until Postgres accepts connections
+        options: >-
+          --health-cmd "pg_isready -U realmile"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    # Throwaway values for the throwaway database above, not real secrets
+    env:
+      DATABASE_URL: postgresql+asyncpg://realmile:realmile@localhost:5432/realmile_test
+      DATABASE_SSL: "false"   # the CI Postgres has no SSL (Neon does)
+      SECRET_KEY: ci-test-secret-key
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: "60"
+      RUN_INTEGRATION_TESTS: "1"
     steps:
       - name: Checkout the code
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # The Dockerfile runs `npm ci` and `next build`, so this also
-      # type-checks and compiles the frontend.
-      - name: Build image
-        uses: docker/build-push-action@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
         with:
-          context: ./frontend
-          push: false
-          tags: realmile-web:ci
-          cache-from: type=gha,scope=web
-          cache-to: type=gha,mode=max,scope=web
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.0"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      # Same command the ECS migrate container runs, so migrations are tested too
+      - name: Apply database migrations
+        run: uv run python -m app.migrate
+
+      - name: Run integration tests
+        run: uv run pytest tests/integration -v
