@@ -18,7 +18,7 @@ async def signup(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
     create staff and riders through the protected POST /users/ route.
     """
     user_count = (await db.execute(select(func.count(User.id)))).scalar() or 0
-    if user_count > 1:
+    if user_count > 0:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Signup is closed. Ask an admin to create your account."
