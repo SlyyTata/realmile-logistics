@@ -1,5 +1,4 @@
 import asyncio
-from logging.config import fileConfig
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
@@ -16,10 +15,6 @@ from app.models.parcel import TrackingEvent
 
 # Alembic Config object
 config = context.config
-
-# Interpret the config file for logging
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
 
 # 2. Set the target metadata for autogenerate support
 target_metadata = Base.metadata
