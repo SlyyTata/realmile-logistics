@@ -1,9 +1,9 @@
 name: CD
 
-# Every merge to main: build both images, push them to Amazon ECR tagged with
-# the commit SHA, then roll them out to ECS. AWS access uses OIDC (no stored keys),
-# for both the ECR push and the ECS deploy.
-#
+# Every merge to main: build both images, push them to Docker Hub tagged with
+# the commit SHA, then roll them out to ECS.
+#   Docker Hub login: DOCKERHUB_USERNAME (variable) + DOCKERHUB_TOKEN (secret, an access token)
+#   AWS login (ECS deploy only): OIDC, no stored AWS keys
 
 on:
   push:
@@ -16,6 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
   AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
   AWS_REGION: ${{ vars.AWS_REGION }}
   ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
@@ -38,15 +39,17 @@ jobs:
     permissions: {}
     steps:
       - name: Verify required secrets and variables are set
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           missing=""
-          for name in AWS_DEPLOY_ROLE_ARN AWS_REGION ECS_CLUSTER \
+          for name in DOCKERHUB_USERNAME DOCKERHUB_TOKEN AWS_DEPLOY_ROLE_ARN AWS_REGION ECS_CLUSTER \
                       API_SERVICE API_TASK_FAMILY API_CONTAINER MIGRATE_CONTAINER API_REPOSITORY \
                       WEB_SERVICE WEB_TASK_FAMILY WEB_CONTAINER WEB_REPOSITORY NEXT_PUBLIC_API_URL; do
             if [ -z "${!name}" ]; then missing="$missing $name"; fi
           done
           if [ -n "$missing" ]; then
-            echo "::error::Missing GitHub variables:$missing"
+            echo "::error::Missing GitHub secrets/variables:$missing"
             exit 1
           fi
           echo "All required configuration is set."
@@ -56,11 +59,10 @@ jobs:
     needs: check-config
     runs-on: ubuntu-latest
     permissions:
-      id-token: write   # OIDC login to AWS, needed to push to ECR
-      contents: read
+      contents: read    # no AWS access needed: images go to Docker Hub
     strategy:
       # I used a matrix because the API and web images go through exactly the same steps:
-      # check out the code, set up Buildx, log in to ECR, then build and push.
+      # check out the code, set up Buildx, log in to Docker Hub, then build and push.
       # Only a few values differ: the name, the repository, the folder and the build argument.
       # The matrix lets me write the steps once and run them for each image.
       matrix:
@@ -81,15 +83,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+      # The token is masked in logs; use a Docker Hub access token, not your password
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
         with:
-          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Log in to Amazon ECR
-        id: ecr
-        uses: aws-actions/amazon-ecr-login@v2
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -99,8 +98,8 @@ jobs:
           push: true
           build-args: ${{ matrix.build-args }}
           tags: |
-            ${{ steps.ecr.outputs.registry }}/${{ matrix.repository }}:${{ github.sha }}
-            ${{ steps.ecr.outputs.registry }}/${{ matrix.repository }}:latest
+            docker.io/${{ env.DOCKERHUB_USERNAME }}/${{ matrix.repository }}:${{ github.sha }}
+            docker.io/${{ env.DOCKERHUB_USERNAME }}/${{ matrix.repository }}:latest
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 
@@ -121,12 +120,11 @@ jobs:
           role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # ECR image URIs look like <account>.dkr.ecr.<region>.amazonaws.com/<repo>:<tag>
-      - name: Work out image URIs
+      # Deploy the exact images built above: docker.io/<user>/<repo>:<commit sha>
+      - name: Work out image names
         run: |
-          REGISTRY="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.${AWS_REGION}.amazonaws.com"
-          echo "API_IMAGE=${REGISTRY}/${API_REPOSITORY}:${GITHUB_SHA}" >> "$GITHUB_ENV"
-          echo "WEB_IMAGE=${REGISTRY}/${WEB_REPOSITORY}:${GITHUB_SHA}" >> "$GITHUB_ENV"
+          echo "API_IMAGE=docker.io/${DOCKERHUB_USERNAME}/${API_REPOSITORY}:${GITHUB_SHA}" >> "$GITHUB_ENV"
+          echo "WEB_IMAGE=docker.io/${DOCKERHUB_USERNAME}/${WEB_REPOSITORY}:${GITHUB_SHA}" >> "$GITHUB_ENV"
 
       # Start from the live task definitions (managed by Terraform) and only swap the image
       - name: Download current task definitions
