@@ -1,16 +1,11 @@
 name: CD
 
-# Every merge to main: build both images, push them to Docker Hub tagged with
-# the commit SHA, then roll them out to ECS.
-#   Docker Hub login: DOCKERHUB_USERNAME (variable) + DOCKERHUB_TOKEN (secret, an access token)
-#   AWS login (ECS deploy only): OIDC, no stored AWS keys
-
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
-# Never run two deploys at once, and never cancel one halfway through
+# Never run two deployments at once, and never cancel one halfway through
 concurrency:
   group: deploy-production
   cancel-in-progress: false
