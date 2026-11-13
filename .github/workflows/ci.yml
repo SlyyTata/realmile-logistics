@@ -103,3 +103,15 @@ jobs:
 
       - name: Run integration tests
         run: uv run pytest tests/integration -v
+
+  # Runs only if a job above failed: posts an alert to the team's Slack channel
+  notify-failure:
+    name: Alert team on Slack
+    needs: [unit-tests, integration-tests]
+    if: failure()
+    permissions: {}
+    uses: ./.github/workflows/notify-slack.yml
+    with:
+      results: ${{ toJSON(needs) }}
+    secrets:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
