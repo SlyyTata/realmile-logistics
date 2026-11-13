@@ -175,3 +175,15 @@ jobs:
           cluster: ${{ env.ECS_CLUSTER }}
           service: ${{ env.WEB_SERVICE }}
           wait-for-service-stability: true
+
+  # Runs only if the config check, an image build or the deploy failed
+  notify-failure:
+    name: Alert team on Slack
+    needs: [check-config, publish, deploy]
+    if: failure()
+    permissions: {}
+    uses: ./.github/workflows/notify-slack.yml
+    with:
+      results: ${{ toJSON(needs) }}
+    secrets:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
