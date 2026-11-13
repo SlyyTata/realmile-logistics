@@ -32,31 +32,8 @@ env:
   NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
 
 jobs:
-  # Fail fast with a clear message instead of a confusing AWS error later
-  check-config:
-    name: Check configuration
-    runs-on: ubuntu-latest
-    permissions: {}
-    steps:
-      - name: Verify required secrets and variables are set
-        env:
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: |
-          missing=""
-          for name in DOCKERHUB_USERNAME DOCKERHUB_TOKEN AWS_DEPLOY_ROLE_ARN AWS_REGION ECS_CLUSTER \
-                      API_SERVICE API_TASK_FAMILY API_CONTAINER MIGRATE_CONTAINER API_REPOSITORY \
-                      WEB_SERVICE WEB_TASK_FAMILY WEB_CONTAINER WEB_REPOSITORY NEXT_PUBLIC_API_URL; do
-            if [ -z "${!name}" ]; then missing="$missing $name"; fi
-          done
-          if [ -n "$missing" ]; then
-            echo "::error::Missing GitHub secrets/variables:$missing"
-            exit 1
-          fi
-          echo "All required configuration is set."
-
   publish:
     name: Publish ${{ matrix.name }} image
-    needs: check-config
     runs-on: ubuntu-latest
     permissions:
       contents: read    # no AWS access needed: images go to Docker Hub
@@ -174,10 +151,10 @@ jobs:
           service: ${{ env.WEB_SERVICE }}
           wait-for-service-stability: true
 
-  # Runs only if the config check, an image build or the deploy failed
+  # Runs only if an image build or the deploy failed
   notify-failure:
     name: Alert team on Slack
-    needs: [check-config, publish, deploy]
+    needs: [publish, deploy]
     if: failure()
     permissions: {}
     uses: ./.github/workflows/notify-slack.yml

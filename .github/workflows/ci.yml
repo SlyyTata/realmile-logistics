@@ -1,17 +1,12 @@
 name: CI
 
-# Runs on every push and on PRs to main. Nothing is published or deployed here.
-#   unit-tests         fast tests of app logic, no database
-#   integration-tests  the real API against a throwaway Postgres, after running migrations
-
-
 on:
   push:
     branches: ["**"]
   pull_request:
     branches: [main]
 
-# Cancel an in-progress run when a newer commit is pushed to the same branch
+# Cancel a run in-progress when a newer commit is available
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -19,26 +14,27 @@ concurrency:
 permissions:
   contents: read
 
+#use the uv version that the actions/setup-uv@v6 action installs
 env:
   UV_PYTHON_PREFERENCE: only-system   # use the Python from actions/setup-python
 
 jobs:
+
+  #Unit test Job starts here
   unit-tests:
     name: Unit tests
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout the code
         uses: actions/checkout@v4
 
-      # Stable Python 3.14 (same as the python:3.14-slim production image)
+        
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.14"
 
-      # uv installs the exact versions from uv.lock (incl. dev tools).
-      # UV_PYTHON_PREFERENCE=only-system (below) stops uv 0.8.0 from downloading
-      # its own Python 3.14, which is an old beta that pydantic crashes on.
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
@@ -52,6 +48,8 @@ jobs:
       - name: Run unit tests
         run: uv run pytest tests/unit -v
 
+
+  # Integration-tests job: checking that the separate parts of this app work correctly together, not just on their own.
   integration-tests:
     name: Integration tests
     runs-on: ubuntu-latest
@@ -71,6 +69,7 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+
     # Throwaway values for the throwaway database above, not real secrets
     env:
       DATABASE_URL: postgresql+asyncpg://realmile:realmile@localhost:5432/realmile_test
@@ -79,6 +78,7 @@ jobs:
       ALGORITHM: HS256
       ACCESS_TOKEN_EXPIRE_MINUTES: "60"
       RUN_INTEGRATION_TESTS: "1"
+
     steps:
       - name: Checkout the code
         uses: actions/checkout@v4
@@ -103,6 +103,7 @@ jobs:
 
       - name: Run integration tests
         run: uv run pytest tests/integration -v
+
 
   # Runs only if a job above failed: posts an alert to the team's Slack channel
   notify-failure:
