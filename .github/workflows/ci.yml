@@ -52,6 +52,7 @@ jobs:
   # Integration-tests job: checking that the separate parts of this app work correctly together, not just on their own.
   integration-tests:
     name: Integration tests
+    needs: unit-tests
     runs-on: ubuntu-latest
     # A real Postgres for this job only; it is thrown away when the job ends
     services:
