@@ -110,7 +110,6 @@ jobs:
   notify-failure:
     name: Alert team on Slack
     needs: [unit-tests, integration-tests]
-    if: failure()
     permissions: {}
     uses: ./.github/workflows/notify-slack.yml
     with:
