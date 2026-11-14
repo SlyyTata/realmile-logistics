@@ -105,7 +105,8 @@ jobs:
         run: uv run pytest tests/integration -v
 
 
-  # Runs only if a job above failed: posts an alert to the team's Slack channel
+  # Runs only if a job above failed: posts an alert to the team's Slack channel 
+  # to push now
   notify-failure:
     name: Alert team on Slack
     needs: [unit-tests, integration-tests]
