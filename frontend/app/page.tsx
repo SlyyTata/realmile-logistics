@@ -39,7 +39,7 @@ export default function LandingPage() {
           transition={{ duration: 0.5 }}
           className="text-8xl font-black tracking-tighter text-slate-900 max-w-5xl leading-[0.8] mb-10"
         >
-          The <span className="text-primary italic drop-shadow-sm">Gold Standard</span> of <br />
+          The <span className="text-primary italic drop-shadow-sm">Gold Standard slyy tata</span> of <br />
           logistics management.
         </motion.h1>
 
